@@ -50,39 +50,46 @@ function saveCards(cards, removeOldestOnQuota = true) {
   }
 }
 
-function loadCompressedImage(url, maxDimension = 300) {
+async function loadImageAsDataUrl(url) {
+  const imageResponse = await fetch(url);
+  if (!imageResponse.ok) {
+    throw new Error(`Image request failed with status ${imageResponse.status}.`);
+  }
+
+  const blob = await imageResponse.blob();
+
   return new Promise((resolve, reject) => {
-    const image = new Image();
-    const directUrl = url;
-    const requestUrl = `${url}?t=${Date.now()}`;
-    image.crossOrigin = "anonymous";
-
-    image.addEventListener("load", () => {
-      const scale = Math.min(1, maxDimension / image.naturalWidth, maxDimension / image.naturalHeight);
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-
-      const context = canvas.getContext("2d");
-      if (!context) {
-        resolve(directUrl);
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("The image could not be converted to a Data URL."));
         return;
       }
 
-      try {
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", 0.7));
-      } catch (error) {
-        console.warn("Canvas compression was blocked by CORS; using the direct image URL.", error);
-        resolve(directUrl);
-      }
+      resolve(reader.result);
     });
-    image.addEventListener("error", () => {
-      console.warn("The image could not be loaded with CORS enabled; using the direct image URL.");
-      resolve(directUrl);
+    reader.addEventListener("error", () => {
+      reject(reader.error || new Error("The image could not be read."));
     });
-    image.src = requestUrl;
+    reader.readAsDataURL(blob);
   });
+}
+
+async function fetchRandomDogImage() {
+  const apiResponse = await fetch("https://dog.ceo/api/breeds/image/random");
+  if (!apiResponse.ok) {
+    throw new Error(`Dog image API request failed with status ${apiResponse.status}.`);
+  }
+
+  const data = await apiResponse.json();
+  if (data.status !== "success" || typeof data.message !== "string") {
+    throw new Error("The dog image API returned an invalid response.");
+  }
+
+  return {
+    imageUrl: data.message,
+    imageSrc: await loadImageAsDataUrl(data.message)
+  };
 }
 
 function createCardMarkup(card, showDeleteButton = false) {
@@ -186,13 +193,12 @@ form.addEventListener("submit", async (event) => {
   }
   captionInput.setCustomValidity("");
 
-  const imageUrl = `https://place.dog/${width}/${height}`;
   submitButton.disabled = true;
   formStatus.classList.remove("error");
   formStatus.textContent = "Fetching your dog image...";
 
   try {
-    const imageSrc = await loadCompressedImage(imageUrl);
+    const { imageUrl, imageSrc } = await fetchRandomDogImage();
     const card = {
       id: typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
@@ -221,7 +227,7 @@ form.addEventListener("submit", async (event) => {
   } catch (error) {
     console.error("Unable to generate and save the dog card.", error);
     formStatus.classList.add("error");
-    formStatus.textContent = "The dog image could not be loaded or compressed. Please try again.";
+    formStatus.textContent = "The dog image could not be loaded. Please check your connection and try again.";
   } finally {
     submitButton.disabled = false;
   }
